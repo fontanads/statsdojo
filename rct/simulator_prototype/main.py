@@ -6,6 +6,10 @@ from utils import compute_uplift, expand_user_ids, redistribute_non_assigned_use
 from user_class import User
 from typing import List
 
+# --------------------------------------------------------------------------- #
+# ARBITRARY INPUT PARAMETERS: TRUE VALUES FOR THE MODEL
+# --------------------------------------------------------------------------- #
+
 # Global Parameters
 __SEED__ = 12345  # Seed for reproducibility
 
@@ -28,21 +32,32 @@ K_ARMS = 4  # Number of arms in the A/B test
 SPLIT_WEIGHTS = np.array([0.25, 0.25, 0.25, 0.25])  # Must sum to 1
 CONVERSION_RATE_UPLIFTS = np.array([0.0, 0.0, 0.1, -0.1])  # Relative increase in conversion or revenue per arm
 REVENUE_PER_CUSTOMER_UPLIFTS = np.array([0.0, 0.0, 0.05, -0.05])  # Relative increase in conversion or revenue per arm
-PROB_REUTRN_NEXT_DAY_UPLIFTS = np.array([0.0, 0.0, 0.0, 0.0])
-PROB_RETURN_NEXT_WEEK_UPLIFTS = np.array([0.0, 0.0, 0.0, 0.0])
+PROB_REUTRN_NEXT_DAY_UPLIFTS = np.array([0.0, 0.0, 0.2, -0.2])
+PROB_RETURN_NEXT_WEEK_UPLIFTS = np.array([0.0, 0.0, 0.2, -0.2])
 
 assert len(CONVERSION_RATE_UPLIFTS) == K_ARMS
 assert len(REVENUE_PER_CUSTOMER_UPLIFTS) == K_ARMS
 assert len(SPLIT_WEIGHTS) == K_ARMS
 assert sum(SPLIT_WEIGHTS) == 1
 
-# Compute adjusted values for treatment arms
+# --------------------------------------------------------------------------- #
+# PARAMETERS TO BE ESTIMATED IN EACH ARM
+# --------------------------------------------------------------------------- #
+
 vec_compute_uplift = np.vectorize(compute_uplift)
+# adjusted values for treatment arms
 p_k = vec_compute_uplift(TRUE_CONVERSION_RATE, np.array(CONVERSION_RATE_UPLIFTS))
 r_k = vec_compute_uplift(TRUE_REVENUE_PER_CUSTOMER, np.array(REVENUE_PER_CUSTOMER_UPLIFTS))
-r_std_k = TRUE_REVENUE_STD * np.ones(K_ARMS)
 rr_day_k = vec_compute_uplift(TRUE_PROB_RETURN_NEXT_DAY, np.array(PROB_REUTRN_NEXT_DAY_UPLIFTS))
 rr_week_k = vec_compute_uplift(TRUE_PROB_RETURN_NEXT_WEEK, np.array(PROB_RETURN_NEXT_WEEK_UPLIFTS))
+# these are the same for all arms
+r_std_k = TRUE_REVENUE_STD * np.ones(K_ARMS)
+tau_day_k = TRUE_TAU_WINDOW_DAYS * np.ones(K_ARMS)
+tau_week_k = TRUE_TAU_WINDOW_WEEKS * np.ones(K_ARMS)
+
+# --------------------------------------------------------------------------- #
+# SIMULATION
+# --------------------------------------------------------------------------- #
 
 # Initialize simulation state
 users: List[User] = []
@@ -85,7 +100,7 @@ def simulate_day(day):
 
         if day > user.entry_day:
             # sample activity status of existing users
-            user_return_prob_today = return_probability(user.days_inactive, rr_day_k[user.arm], rr_week_k[user.arm], TRUE_TAU_WINDOW_DAYS, TRUE_TAU_WINDOW_WEEKS)
+            user_return_prob_today = return_probability(user.days_inactive, rr_day_k[user.arm], rr_week_k[user.arm], tau_day_k[user.arm], tau_week_k[user.arm])
             is_active = np.random.rand() < user_return_prob_today
         else:
             # new users are always active
@@ -105,7 +120,6 @@ def simulate_day(day):
     print(f"Daily active users: {daily_active_users}")
     return users
 
-
 data_records = []
 for day in range(TEST_DAYS):
     users = simulate_day(day)
@@ -114,7 +128,7 @@ for day in range(TEST_DAYS):
     for user in users:
         data_records.append(
                 {
-                    'day': day, 
+                    'day': day,
                     'user_id': user.user_id,
                     'arm': user.arm,
                     'is_active': user.daily_metrics.activity_status,
@@ -130,9 +144,14 @@ for day in range(TEST_DAYS):
                 }
         )
 
-df = pd.DataFrame(data_records)
-df['active_user_id'] = df['user_id'].where(df['is_active'], None)
+# --------------------------------------------------------------------------- #
+# POST-SIMULATION ANALYSIS
+# --------------------------------------------------------------------------- #
 
+# Create DataFrame
+df = pd.DataFrame(data_records)
+# Compute additional metrics
+df['active_user_id'] = df['user_id'].where(df['is_active'], None)
 df['revenue_per_transaction'] = df['cumulative_revenue'] / df['cumulative_transactions']
 df['revenue_per_active_day'] = df['cumulative_revenue'] / df['active_days']
 df['transactions_per_active_day'] = df['cumulative_transactions'] / df['active_days']
@@ -169,6 +188,7 @@ def compute_daily_stats(df):
     ).reset_index()
     return daily_stats
 
+# Compute daily stats
 daily_stats = compute_daily_stats(df)
 daily_stats['inactivity_rate'] = 1 - daily_stats['active_users'] / daily_stats['unique_users']
 
@@ -189,9 +209,7 @@ print(f"Total Transactions: {df['transactions'].sum():.2f}")
 print(f"Total Conversions: {df['converted'].sum():.2f}")
 print('\n' * 2)
 
-# group by arm and show stats
-# avg conversion rate, avg revenue per transaction, avg revenue per active day
-
+# Stats per arm
 def get_stats_per_arm(daily_stats) -> pd.DataFrame:
     stats_per_arm = daily_stats.set_index('day').loc[TEST_DAYS-1].groupby(['arm']).agg(
             num_users_assigned=('unique_users', 'sum'),
@@ -210,6 +228,7 @@ def get_stats_per_arm(daily_stats) -> pd.DataFrame:
         ).T
     return stats_per_arm
 
+# Stats per arm
 full_pop_stats_per_arm = get_stats_per_arm(daily_stats)
 customers_stats_per_arm = get_stats_per_arm(customers_daily_stats)
 
