@@ -17,7 +17,7 @@
   ```
   # set the path to the CmdStan installation
   from cmdstanpy import cmdstan_path, set_cmdstan_path
-  set_cmdstan_path(os.path.join("C:", "Users", "MyUserHome", "cmdstan"))
+  set_cmdstan_path(os.path.join("C:" + os.sep, "Users", "MyUserHome", "cmdstan"))
   cmdstan_path()
   ```
 
