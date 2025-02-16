@@ -16,6 +16,7 @@ scikit-learn = "^1.5.1"
 # setuptools = "^74.1.2"
 # distlib = "^0.3.8"
 graphviz = "^0.20.3"
+cmdstanpy = "^1.2.5"
 
 
 [tool.poetry.group.dev.dependencies]
